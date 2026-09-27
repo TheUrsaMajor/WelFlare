@@ -292,7 +292,7 @@ function App() {
           {!donationsLoading && visible.length === 0 && <div className="empty-state"><Package size={25} /><h3>No current donations match</h3><p>Try another category or filter. New listings will appear here after someone posts them.</p>{session && <button className="button button-primary" onClick={() => setModal('donate')}><Plus size={16} /> Start a donation</button>}</div>}
         </section>
         <section className="lower-cards"><div className="community-banner"><span className="banner-stamp"><Heart size={17} /></span><div><h3>Something useful deserves another life.</h3><p>List it in a few minutes and we’ll help connect it to a verified local organization.</p></div><button className="button button-light" onClick={() => setModal('donate')}>Share something <ArrowRight size={15} /></button></div><div className="safe-card"><ShieldCheck size={18} /><span><b>Giving with confidence</b><small>Recipients are reviewed before they can receive donations.</small></span><ChevronRight size={16} /></div></section>
-      </> : <SecondaryPage page={page} donations={donations} claimed={claimed} claimRecords={claimRecords} session={session} profile={profile} onSaveProfile={saveProfile} onSignOut={signOut} onExplore={() => setPage('discover')} onDonate={() => session ? setModal('donate') : setModal('account')} onRegister={() => setPage('verification')} onClaim={claim} onAdvance={advancePickup} />}
+      </> : page === 'profile' ? <ProfilePage session={session} profile={profile} onSave={saveProfile} onSignOut={signOut} /> : <SecondaryPage page={page} donations={donations} claimed={claimed} claimRecords={claimRecords} session={session} profile={profile} onSaveProfile={saveProfile} onSignOut={signOut} onExplore={() => setPage('discover')} onDonate={() => session ? setModal('donate') : setModal('account')} onRegister={() => setPage('verification')} onClaim={claim} onAdvance={advancePickup} />}
       <footer className="footer"><span>© 2026 WelFlare</span><span><ShieldCheck size={12} /> A coordination platform built around care</span></footer>
     </main>
     {modal === 'donate' && <DonationModal onClose={() => setModal('')} onCreate={createDonation} userLocation={userLocation} onUseMyLocation={useMyLocation} />}
@@ -372,9 +372,15 @@ function SecondaryPage({ page, donations, claimed, claimRecords = [], session, p
   const [volunteerInvites, setVolunteerInvites] = useState([])
   const stepPanel = React.useRef(null)
   const [tab, setTab] = useState('application')
-  if (page === 'profile') return <ProfilePage session={session} profile={profile} onSave={onSaveProfile} onSignOut={onSignOut} />
   React.useEffect(() => {
-    if (page !== 'verification' || tab !== 'admin' || !supabase) return
+    if (page !== 'verification' || tab !== 'admin') return
+    if (!session) {
+      setQueue([])
+      setQueueError('Sign in with an authorized WelFlare administrator account to access this private review queue.')
+      setQueueLoading(false)
+      return
+    }
+    if (!supabase) return
     let current = true
     setQueueLoading(true); setQueueError('')
     supabase.functions.invoke('get-review-queue').then(({ data, error }) => {
@@ -383,7 +389,7 @@ function SecondaryPage({ page, donations, claimed, claimRecords = [], session, p
       else setQueue(data?.applications ?? [])
     }).finally(() => { if (current) setQueueLoading(false) })
     return () => { current = false }
-  }, [page, tab])
+  }, [page, tab, session])
   React.useEffect(() => {
     if (page !== 'organizations' || !supabase) return
     let current = true
