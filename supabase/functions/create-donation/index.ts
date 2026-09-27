@@ -43,6 +43,8 @@ Deno.serve(async (request) => {
   const itemName = String(input.name ?? '').trim()
   const quantity = String(input.qty ?? '').trim().match(/^(\d+(?:\.\d+)?)\s+(.+)$/)
   const place = String(input.place ?? '').trim()
+  const latitude = Number(input.latitude)
+  const longitude = Number(input.longitude)
   const pickupDeadline = new Date(String(input.pickupDeadline ?? ''))
   const expiry = input.expiry ? new Date(String(input.expiry)) : null
   const preparedAt = input.preparedAt ? new Date(String(input.preparedAt)) : null
@@ -52,7 +54,7 @@ Deno.serve(async (request) => {
 
   if (!category || itemName.length < 2 || itemName.length > 120) return json({ error: 'Please add a valid name and category.' }, 400)
   if (!quantity || Number(quantity[1]) <= 0 || Number(quantity[1]) > 1000000) return json({ error: 'Please enter a valid donation quantity.' }, 400)
-  if (!place || place.length > 180 || !Number.isFinite(pickupDeadline.valueOf()) || pickupDeadline <= new Date()) return json({ error: 'Please set a nearby pickup area and a future pickup deadline.' }, 400)
+  if (!place || place.length > 180 || !Number.isFinite(latitude) || latitude < -90 || latitude > 90 || !Number.isFinite(longitude) || longitude < -180 || longitude > 180 || !Number.isFinite(pickupDeadline.valueOf()) || pickupDeadline <= new Date()) return json({ error: 'Please choose a pickup area on the map and set a future pickup deadline.' }, 400)
   if (category === 'food' && (!expiry || !Number.isFinite(expiry.valueOf()) || expiry <= new Date() || !preparedAt || !Number.isFinite(preparedAt.valueOf()) || preparedAt > new Date() || preparedAt >= expiry || !input.safety)) return json({ error: 'Food needs an accurate preparation time, future best-before time and a food handling acknowledgement.' }, 400)
   if (!allowedImages.has(imageType) || !imageBase64 || imageBase64.length > 14_000_000) return json({ error: 'Add one JPG, PNG, WebP or HEIC photo under 10 MB.' }, 400)
 
@@ -78,7 +80,7 @@ Deno.serve(async (request) => {
     pickup_deadline: pickupDeadline.toISOString(), expires_at: expiry?.toISOString() ?? null,
     prepared_at: preparedAt?.toISOString() ?? null, food_type: category === 'food' ? String(input.foodType ?? 'unspecified').slice(0, 40) : null,
     condition: category !== 'food' ? String(input.condition ?? '').slice(0, 60) : null,
-    location_area: place, status: 'draft',
+    location_area: place, location_latitude: Number(latitude.toFixed(3)), location_longitude: Number(longitude.toFixed(3)), status: 'draft',
     food_safety_declaration: category === 'food' && input.safety === true,
     food_safety_declaration_version: category === 'food' ? 'food-safety-v1' : null,
     food_safety_declared_at: category === 'food' ? new Date().toISOString() : null,

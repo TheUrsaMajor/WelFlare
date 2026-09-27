@@ -4,31 +4,35 @@ import {
   ArrowDownLeft, ArrowLeft, ArrowRight, BadgeCheck, Bell, BookOpen, Building2,
   Camera, Check, ChevronDown, ChevronRight, Clock3, Coffee, FileCheck2,
   FileText, Filter, Heart, Home, Leaf, LogIn, MapPin, Menu, Package,
-  Plus, Search, ShieldCheck, Shirt, SlidersHorizontal, Sparkles, Truck,
+  Plus, Search, ShieldCheck, SlidersHorizontal, Sparkles, Truck,
   Upload, Utensils, Users, X,
 } from 'lucide-react'
 import './styles.css'
 import './admin.css'
 import { isSupabaseConfigured, supabase } from './supabase'
+import MapView from './MapView'
 
-const initialDonations = [
-  { id: 1, name: 'Fresh lunch boxes', category: 'food', subtype: 'Cooked meals', qty: '24 meals', expiry: '2h 14m', expiresAt: new Date(Date.now()+2.23*3600000).toISOString(), urgency: 'Critical', place: 'Indiranagar · 1.2 km', donor: 'Green Leaf Kitchen', icon: Utensils, color: 'peach', image: 'https://images.unsplash.com/photo-1547592180-85f173990554?auto=format&fit=crop&w=700&q=80', time: 'Posted 12 min ago' },
-  { id: 2, name: 'Everyday clothing bundle', category: 'items', subtype: 'Clothes', qty: '18 pieces', expiry: '', urgency: '', place: 'Koramangala · 2.4 km', donor: 'Aarav Mehta', icon: Shirt, color: 'lavender', image: 'https://images.unsplash.com/photo-1489987707025-afc232f7ea0f?auto=format&fit=crop&w=700&q=80', time: 'Posted 28 min ago' },
-  { id: 3, name: 'Bakery assortment', category: 'food', subtype: 'Bakery', qty: '3 trays', expiry: '5h 30m', expiresAt: new Date(Date.now()+5.5*3600000).toISOString(), urgency: 'Soon', place: 'Domlur · 2.8 km', donor: 'Daily Bread Co.', icon: Coffee, color: 'sand', image: 'https://images.unsplash.com/photo-1509440159596-0249088772ff?auto=format&fit=crop&w=700&q=80', time: 'Posted 35 min ago' },
-  { id: 4, name: 'Children’s storybooks', category: 'items', subtype: 'Books', qty: '32 books', expiry: '', urgency: '', place: 'HSR Layout · 3.1 km', donor: 'Maya & family', icon: BookOpen, color: 'mint', image: 'https://images.unsplash.com/photo-1512820790803-83ca734da794?auto=format&fit=crop&w=700&q=80', time: 'Posted 1 hr ago' },
-  { id: 5, name: 'Seasonal fruit boxes', category: 'food', subtype: 'Produce', qty: '12 boxes', expiry: '10h', expiresAt: new Date(Date.now()+10*3600000).toISOString(), urgency: 'Fresh', place: 'Ulsoor · 3.7 km', donor: 'Harvest House', icon: Leaf, color: 'mint', image: 'https://images.unsplash.com/photo-1619566636858-adf3ef46400b?auto=format&fit=crop&w=700&q=80', time: 'Posted 1 hr ago' },
-  { id: 6, name: 'Warm blankets', category: 'items', subtype: 'Beddings', qty: '9 blankets', expiry: '', urgency: '', place: 'Jayanagar · 4.2 km', donor: 'Homefolk PG', icon: Package, color: 'peach', image: 'https://images.unsplash.com/photo-1600369671236-e74521d4b6ad?auto=format&fit=crop&w=700&q=80', time: 'Posted 2 hrs ago' },
-]
+const filters = ['All', 'Food', 'Clothes', 'Books', 'Household']
 
-const filters = ['All nearby', 'Food', 'Clothes', 'Books', 'Household']
+function distanceKm(from, to) {
+  if (![from?.latitude, from?.longitude, to?.latitude, to?.longitude].every(value => Number.isFinite(Number(value)))) return Number.POSITIVE_INFINITY
+  const radians = value => Number(value) * Math.PI / 180
+  const latDelta = radians(to.latitude - from.latitude)
+  const lngDelta = radians(to.longitude - from.longitude)
+  const a = Math.sin(latDelta / 2) ** 2 + Math.cos(radians(from.latitude)) * Math.cos(radians(to.latitude)) * Math.sin(lngDelta / 2) ** 2
+  return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+}
 
 function App() {
   const [category, setCategory] = useState('food')
-  const [filter, setFilter] = useState('All nearby')
+  const [filter, setFilter] = useState('All')
+  const [sortBy, setSortBy] = useState('newest')
   const [query, setQuery] = useState('')
   const [page, setPage] = useState('discover')
   const [modal, setModal] = useState('account')
-  const [donations, setDonations] = useState(initialDonations)
+  const [donations, setDonations] = useState([])
+  const [donationsLoading, setDonationsLoading] = useState(true)
+  const [donationError, setDonationError] = useState('')
   const [claimed, setClaimed] = useState([])
   const [claimRecords, setClaimRecords] = useState([])
   const [accountType, setAccountType] = useState('Individual')
@@ -36,6 +40,13 @@ function App() {
   const [toast, setToast] = useState('')
   const [mobileNav, setMobileNav] = useState(false)
   const [session, setSession] = useState(null)
+  const [profile, setProfile] = useState(null)
+  const [verifiedOrgCount, setVerifiedOrgCount] = useState(0)
+  const [userLocation, setUserLocation] = useState(null)
+  const [mapMode, setMapMode] = useState(false)
+  const [notificationOpen, setNotificationOpen] = useState(false)
+  const [notifications, setNotifications] = useState([])
+  const [notificationError, setNotificationError] = useState('')
   const [currentTime, setCurrentTime] = useState(Date.now())
 
   React.useEffect(() => {
@@ -46,52 +57,83 @@ function App() {
   const visible = useMemo(() => donations.filter(item => {
     const typeMatch = item.category === category
     const expiryMatch = item.category !== 'food' || !item.expiresAt || new Date(item.expiresAt) > new Date()
-    const statusMatch = !item.status || item.status === 'posted'
-    const filterMatch = filter === 'All nearby' || item.subtype.toLowerCase().includes(filter.toLowerCase()) || (filter === 'Household' && item.subtype === 'Beddings')
+    const filterMatch = filter === 'All' || item.subtype.toLowerCase().includes(filter.toLowerCase()) || (filter === 'Household' && (item.subtype === 'Beddings' || item.subtype === 'Household items'))
     const queryMatch = `${item.name} ${item.subtype} ${item.donor} ${item.place}`.toLowerCase().includes(query.toLowerCase())
-    return typeMatch && expiryMatch && statusMatch && filterMatch && queryMatch
-  }), [donations, category, filter, query, currentTime])
+    return typeMatch && expiryMatch && filterMatch && queryMatch
+  }).sort((a, b) => sortBy === 'nearest' && userLocation ? distanceKm(userLocation, a) - distanceKm(userLocation, b) : new Date(b.createdAt || 0) - new Date(a.createdAt || 0)), [donations, category, filter, query, currentTime, sortBy, userLocation])
 
   function notify(text) {
     setToast(text)
     window.setTimeout(() => setToast(''), 2800)
   }
 
-  async function beginGoogle(organizationType) {
+  async function beginGoogle(organizationType, fullName = '', phone = '', homeArea = '') {
     if (!supabase) { notify('Add your Supabase keys to turn on secure sign-in'); return }
-    window.localStorage.setItem('welflare-onboarding', JSON.stringify({ accountType, organizationType, intent }))
+    window.localStorage.setItem('welflare-onboarding', JSON.stringify({ accountType, organizationType, intent, fullName, phone, homeArea }))
     const { error } = await supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: window.location.origin } })
     if (error) notify(error.message)
   }
 
-  async function authenticate(email, password, mode, organizationType) {
-    if (!supabase) { notify('Demo preview only · Add Supabase keys to enable account sign-in'); return }
-    window.localStorage.setItem('welflare-onboarding', JSON.stringify({ accountType, organizationType, intent }))
+  async function authenticate(email, password, mode, organizationType, fullName, phone, homeArea) {
+    if (!supabase) throw new Error('Account services are not configured yet. Please try again later.')
+    window.localStorage.setItem('welflare-onboarding', JSON.stringify({ accountType, organizationType, intent, fullName, phone, homeArea }))
     const result = mode === 'signup'
-      ? await supabase.auth.signUp({ email, password, options: { data: { display_name: '', account_kind: accountType.toLowerCase(), organization_type: accountType === 'Organization' ? organizationType : null, intent: intent.toLowerCase() } } })
+      ? await supabase.auth.signUp({ email, password, options: { data: { display_name: fullName.trim(), account_kind: accountType.toLowerCase(), organization_type: accountType === 'Organization' ? organizationType : null, intent: intent.toLowerCase() } } })
       : await supabase.auth.signInWithPassword({ email, password })
     if (result.error) throw result.error
     return result.data
   }
 
+  async function loadDonations() {
+    if (!supabase) { setDonations([]); setDonationsLoading(false); return }
+    setDonationsLoading(true); setDonationError('')
+    const { data, error } = await supabase.from('donations')
+      .select('id,donor_id,category,item_name,quantity,unit,expires_at,pickup_deadline,location_area,location_latitude,location_longitude,created_at,status,donation_photos(storage_path)')
+      .eq('status', 'posted').order('created_at', { ascending: false }).limit(100)
+    if (error) { setDonations([]); setDonationError('We could not load current donations. Please refresh in a moment.') }
+    else setDonations((data ?? []).map(row => {
+      const path = row.donation_photos?.[0]?.storage_path
+      const photo = path ? supabase.storage.from('donation-photos').getPublicUrl(path).data.publicUrl : ''
+      const expiry = row.expires_at ? new Date(row.expires_at) : null
+      const hours = expiry ? Math.max(0, (expiry - new Date()) / 36e5) : 0
+      return { id: row.id, name: row.item_name, category: row.category === 'food' ? 'food' : 'items', subtype: row.category.replaceAll('_',' '), qty: `${row.quantity} ${row.unit}`, expiry: expiry ? `${Math.floor(hours)}h ${Math.round(hours % 1 * 60)}m` : '', expiresAt: row.expires_at, urgency: expiry ? hours < 3 ? 'Critical' : hours <= 8 ? 'Soon' : 'Fresh' : '', place: row.location_area, latitude: row.location_latitude, longitude: row.location_longitude, donor: session?.user?.id === row.donor_id ? 'Your donation' : 'Community donor', icon: row.category === 'food' ? Utensils : Package, color: 'mint', image: photo, time: new Date(row.created_at).toLocaleString(), createdAt: row.created_at, status: row.status }
+    }).filter(row => row.image))
+    setDonationsLoading(false)
+  }
+
   async function claim(item) {
+    if (!session) { setModal('account'); notify('Sign in to request a pickup. Recipient organizations must be verified.'); return }
     if (claimed.includes(item.id)) return
-    if (isSupabaseConfigured) {
-      if (!session) { setModal('account'); notify('Sign in as a verified recipient organization to request a pickup'); return }
-      const { data, error } = await supabase.functions.invoke('request-pickup', { body: { donationId: item.id } })
-      if (error) { notify(error.message || 'This organization is not yet eligible to request the donation'); return }
-      setClaimRecords(current => [{ claimId: data.claimId, status: 'accepted', item }, ...current])
-    }
-    setClaimed([...claimed, item.id])
+    const { data, error } = await supabase.functions.invoke('request-pickup', { body: { donationId: item.id } })
+    if (error) { notify(error.message || 'This organization is not yet eligible to request the donation'); return }
+    setClaimRecords(current => [{ claimId: data.claimId, status: 'accepted', item }, ...current])
+    setClaimed(current => [...current, item.id])
+    await loadDonations()
     notify(`Pickup request sent for ${item.name}`)
   }
 
   React.useEffect(() => {
     if (!supabase) return
-    supabase.auth.getSession().then(({ data }) => setSession(data.session))
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => { setSession(nextSession); if (nextSession) setModal('') })
+    supabase.auth.getSession().then(({ data }) => { setSession(data.session); if (data.session) setModal('') })
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => { setSession(nextSession); setProfile(null); if (nextSession) setModal(''); else setNotifications([]) })
     return () => listener.subscription.unsubscribe()
   }, [])
+
+  React.useEffect(() => { loadDonations() }, [session])
+
+  React.useEffect(() => {
+    if (!supabase) return
+    supabase.from('organizations').select('id', { count: 'exact', head: true }).eq('verification_status', 'verified')
+      .then(({ count }) => setVerifiedOrgCount(count ?? 0))
+  }, [])
+
+  React.useEffect(() => {
+    if (!supabase || !session) { setProfile(null); return }
+    let active = true
+    supabase.from('profiles').select('display_name,account_kind,organization_type,phone,home_area').eq('id', session.user.id).maybeSingle()
+      .then(({ data }) => { if (active && data) { setProfile(data); setAccountType(data.account_kind === 'organization' ? 'Organization' : 'Individual') } })
+    return () => { active = false }
+  }, [session])
 
   React.useEffect(() => {
     if (!supabase || !session) return
@@ -100,27 +142,12 @@ function App() {
     window.localStorage.removeItem('welflare-onboarding')
     try {
       const selection = JSON.parse(saved)
-      supabase.rpc('save_my_onboarding', { p_account_kind: selection.accountType === 'Organization' ? 'organization' : 'individual', p_organization_type: selection.accountType === 'Organization' ? selection.organizationType : null, p_intent: selection.intent.toLowerCase() }).then(({ error }) => {
-        if (error) notify('Your account is ready; finish your community profile from the account menu.')
+      supabase.rpc('save_my_onboarding', { p_account_kind: selection.accountType === 'Organization' ? 'organization' : 'individual', p_organization_type: selection.accountType === 'Organization' ? selection.organizationType : null, p_intent: selection.intent.toLowerCase() }).then(async ({ error }) => {
+        if (!error && selection.fullName) await supabase.rpc('save_my_profile', { p_display_name: selection.fullName, p_phone: selection.phone || '', p_home_area: selection.homeArea || '' })
+        if (error) notify('Your account is ready; review your profile details before continuing.')
         else if (selection.accountType === 'Organization' && ['Receive','Both'].includes(selection.intent)) setPage('verification')
       })
     } catch { window.localStorage.removeItem('welflare-onboarding') }
-  }, [session])
-
-  React.useEffect(() => {
-    if (!supabase || !session) return
-    let active = true
-    supabase.from('donations').select('id,donor_id,category,item_name,quantity,unit,expires_at,pickup_deadline,location_area,created_at,status,donation_photos(storage_path)').order('created_at', { ascending: false }).then(({ data, error }) => {
-      if (!active || error || !data) return
-      setDonations(data.map(row => {
-        const path = row.donation_photos?.[0]?.storage_path
-        const photo = path ? supabase.storage.from('donation-photos').getPublicUrl(path).data.publicUrl : ''
-        const expiry = row.expires_at ? new Date(row.expires_at) : null
-        const hours = expiry ? Math.max(0, (expiry - new Date()) / 36e5) : 0
-        return { id: row.id, name: row.item_name, category: row.category === 'food' ? 'food' : 'items', subtype: row.category.replaceAll('_',' '), qty: `${row.quantity} ${row.unit}`, expiry: expiry ? `${Math.floor(hours)}h ${Math.round(hours % 1 * 60)}m` : '', expiresAt: row.expires_at, urgency: expiry ? hours < 3 ? 'Critical' : hours <= 8 ? 'Soon' : 'Fresh' : '', place: row.location_area, donor: row.donor_id === session.user.id ? 'You' : 'Community member', icon: row.category === 'food' ? Utensils : Package, color: 'mint', image: photo, time: new Date(row.created_at).toLocaleString(), status: row.status }
-      }).filter(row => row.image))
-    })
-    return () => { active = false }
   }, [session])
 
   React.useEffect(() => {
@@ -152,38 +179,88 @@ function App() {
   }
 
   async function createDonation(data) {
-    if (isSupabaseConfigured && session?.user) {
+    if (!session?.user) { setModal('account'); throw new Error('Sign in to publish a donation.') }
+    if (session?.user) {
       const { error } = await supabase.functions.invoke('create-donation', { body: {
         category: data.category, subtype: data.subtype, name: data.name,
         qty: data.qty, expiry: data.expiryDate, place: data.place,
+        latitude: data.latitude, longitude: data.longitude,
         preparedAt: data.preparedAt, foodType: data.foodType, condition: data.condition,
         pickupDeadline: data.pickupDeadline, notes: data.notes, safety: data.safety, photo: data.photoData,
         photoType: data.photoType, photoName: data.photoName,
       } })
       if (error) throw new Error(error.message || 'Could not publish this donation.')
-      setDonations(current => [{ id: Date.now(), name: data.name, category: data.category, subtype: data.subtype, qty: data.qty, expiry: data.expiry, expiresAt: data.expiryDate, urgency: data.urgency, place: data.place, donor: 'You', icon: data.category === 'food' ? Utensils : Package, image: URL.createObjectURL(data.photoFile), time: 'Posted just now' }, ...current])
+      await loadDonations()
       setCategory(data.category)
-      setFilter('All nearby')
+      setFilter('All')
       setModal('')
       notify('Your donation is now listed nearby')
       return
     }
-    const item = { ...data, id: Date.now(), donor: 'You', time: 'Posted just now', place: data.place || 'Your location', color: 'mint', icon: data.category === 'food' ? Utensils : Package }
-    setDonations([item, ...donations])
-    setCategory(item.category)
-    setFilter('All nearby')
-    setModal('')
-    notify('Your donation is now listed nearby')
   }
+
+  async function saveProfile(details) {
+    const { error } = await supabase.rpc('save_my_profile', { p_display_name: details.display_name, p_phone: details.phone, p_home_area: details.home_area })
+    if (error) throw error
+    setProfile(current => ({ ...current, ...details }))
+    notify('Your profile has been updated')
+  }
+
+  async function signOut() {
+    const { error } = await supabase.auth.signOut()
+    if (error) { notify('We could not sign you out. Please try again.'); return }
+    setPage('discover')
+    notify('You have been signed out')
+  }
+
+  function setApproximateLocation(point, label = 'Map area selected') {
+    if (!point || !Number.isFinite(Number(point.latitude)) || !Number.isFinite(Number(point.longitude))) return
+    setUserLocation({ latitude: Number(Number(point.latitude).toFixed(3)), longitude: Number(Number(point.longitude).toFixed(3)), label })
+  }
+
+  function useMyLocation(onReady) {
+    if (!navigator.geolocation) { notify('This browser does not provide location access. Choose a point on the map instead.'); return }
+    navigator.geolocation.getCurrentPosition(position => {
+      const point = { latitude: Number(position.coords.latitude.toFixed(3)), longitude: Number(position.coords.longitude.toFixed(3)) }
+      setApproximateLocation(point, 'Your approximate area')
+      onReady?.(point)
+      notify('Your approximate location is ready')
+    }, () => notify('Location access was not available. You can choose your area directly on the map.'), { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 })
+  }
+
+  async function refreshNotifications() {
+    if (!session) { setNotificationError('Sign in to view account notifications.'); setNotifications([]); return }
+    const { data, error } = await supabase.from('notifications').select('id,kind,title,message,destination,created_at,read_at').order('created_at', { ascending: false }).limit(30)
+    if (error) { setNotificationError('Notifications are not available right now.'); return }
+    setNotificationError(''); setNotifications(data ?? [])
+  }
+
+  async function openNotifications() {
+    setNotificationOpen(value => !value)
+    if (!notificationOpen) await refreshNotifications()
+  }
+
+  async function openNotification(item) {
+    if (!item.read_at) {
+      const readAt = new Date().toISOString()
+      const { error } = await supabase.from('notifications').update({ read_at: readAt }).eq('id', item.id)
+      if (!error) setNotifications(current => current.map(row => row.id === item.id ? { ...row, read_at: readAt } : row))
+    }
+    setNotificationOpen(false)
+    setPage(item.destination || 'discover')
+  }
+
+  const accountLabel = profile?.display_name || session?.user?.user_metadata?.display_name || 'Your profile'
+  const unseenNotifications = notifications.filter(item => !item.read_at).length
 
   return <div className="app-shell">
     <aside className={`sidebar ${mobileNav ? 'mobile-open' : ''}`}>
       <a className="brand" href="#home" onClick={e => { e.preventDefault(); setPage('discover') }}><span className="brand-mark"><Heart size={18} strokeWidth={2.6} /></span><span>wel<span>flare</span><small>GOOD THINGS, MOVING FORWARD</small></span></a>
-      <button className="workspace-select"><span className="workspace-icon"><Home size={16} /></span><span><b>Community hub</b><small>Bengaluru, India</small></span><ChevronDown size={15} /></button>
+      <button className="workspace-select" onClick={useMyLocation} title="Choose a pickup area using your browser location"><span className="workspace-icon"><MapPin size={16} /></span><span><b>Your area</b><small>{userLocation?.label || profile?.home_area || 'Choose on the map'}</small></span><ChevronDown size={15} /></button>
       <p className="nav-label">YOUR SPACE</p>
       <nav className="side-nav">
         <SideLink icon={Home} label="Discover" active={page === 'discover'} onClick={() => { setPage('discover'); setMobileNav(false) }} />
-        <SideLink icon={Package} label="My donations" count={donations.filter(x => x.donor === 'You').length || ''} active={page === 'donations'} onClick={() => { setPage('donations'); setMobileNav(false) }} />
+        <SideLink icon={Package} label="My donations" count={donations.filter(x => x.donor === 'Your donation').length || ''} active={page === 'donations'} onClick={() => { setPage('donations'); setMobileNav(false) }} />
         <SideLink icon={Truck} label="Pickups" count={claimed.length || ''} active={page === 'pickups'} onClick={() => { setPage('pickups'); setMobileNav(false) }} />
         <SideLink icon={Users} label="Organizations" active={page === 'organizations'} onClick={() => { setPage('organizations'); setMobileNav(false) }} />
       </nav>
@@ -191,39 +268,39 @@ function App() {
       <nav className="side-nav">
         <SideLink icon={Sparkles} label="Impact so far" active={page === 'impact'} onClick={() => { setPage('impact'); setMobileNav(false) }} />
         <SideLink icon={ShieldCheck} label="NGO verification" active={page === 'verification'} onClick={() => { setPage('verification'); setMobileNav(false) }} />
+        {session && <SideLink icon={Users} label="My profile" active={page === 'profile'} onClick={() => { setPage('profile'); setMobileNav(false) }} />}
       </nav>
-      <div className="sidebar-bottom"><div className="help-card"><div className="help-icon"><Heart size={16} /></div><b>A little can go a long way.</b><p>Every thoughtful donation adds up.</p><button onClick={() => setModal('donate')}>Make a donation <ArrowRight size={14} /></button></div>
-        <button className="profile-switch" onClick={() => setModal('account')}><span className="avatar">AM</span><span><b>Aarav Mehta</b><small>Individual account</small></span><MoreIcon /></button>
+      <div className="sidebar-bottom"><div className="help-card"><div className="help-icon"><Heart size={16} /></div><b>A little can go a long way.</b><p>Share available items with your community.</p><button onClick={() => session ? setModal('donate') : setModal('account')}>{session ? 'Make a donation' : 'Sign in to donate'} <ArrowRight size={14} /></button></div>
+        <button className="profile-switch" onClick={() => session ? (setPage('profile'), setMobileNav(false)) : setModal('account')}><span className="avatar">{session ? accountLabel.slice(0,2).toUpperCase() : <LogIn size={15}/>}</span><span><b>{session ? accountLabel : 'Sign in or join'}</b><small>{session ? `${profile?.account_kind === 'organization' ? 'Organization' : 'Individual'} account` : 'Create your account'}</small></span><MoreIcon /></button>
       </div>
     </aside>
     {mobileNav && <button className="scrim" aria-label="Close navigation" onClick={() => setMobileNav(false)} />}
 
     <main className="main-area">
-      <header className="topbar"><div className="topbar-left"><button className="icon-button mobile-menu" onClick={() => setMobileNav(true)} aria-label="Open navigation"><Menu size={19} /></button><span className="breadcrumb">Community hub</span><ChevronRight size={14} /><b>{navName(page)}</b>{(!isSupabaseConfigured || !session) && <span className="preview-chip">{isSupabaseConfigured ? 'SAMPLE DATA' : 'PREVIEW'}</span>}</div><div className="topbar-actions"><span className="location-chip"><MapPin size={14} /> Bengaluru <ChevronDown size={13} /></span><button className="icon-button notification-button" aria-label="Notifications" onClick={() => notify('You’re all caught up')}><Bell size={17} /><i /></button>{session ? <button className="account-chip" onClick={async () => { await supabase.auth.signOut(); notify('You have been signed out') }}><span className="avatar small-avatar">{session.user.email?.slice(0, 2).toUpperCase() || 'WF'}</span><span>Sign out</span></button> : <button className="account-chip" onClick={() => setModal('account')}><LogIn size={15}/> Sign in</button>}</div></header>
+      <header className="topbar"><div className="topbar-left"><button className="icon-button mobile-menu" onClick={() => setMobileNav(true)} aria-label="Open navigation"><Menu size={19} /></button><b>{navName(page)}</b></div><div className="topbar-actions"><button className="location-chip" onClick={useMyLocation} title="Use your approximate location"><MapPin size={14} /> {userLocation?.label || profile?.home_area || 'Set location'} <ChevronDown size={13} /></button><div className="notification-wrap"><button className="icon-button notification-button" aria-label="Notifications" aria-expanded={notificationOpen} onClick={openNotifications}><Bell size={17} />{unseenNotifications > 0 && <i>{unseenNotifications > 9 ? '9+' : unseenNotifications}</i>}</button>{notificationOpen && <section className="notification-panel"><div className="notification-panel-head"><div><b>Notifications</b><small>{unseenNotifications ? `${unseenNotifications} unread` : 'Your account updates'}</small></div><button className="icon-button" aria-label="Close notifications" onClick={() => setNotificationOpen(false)}><X size={15}/></button></div>{notificationError && <p className="notification-empty">{notificationError}</p>}{!notificationError && notifications.length === 0 && <p className="notification-empty">No notifications yet. Pickup and organization updates will appear here.</p>}{notifications.map(item => <button className={`notification-item ${item.read_at ? '' : 'unread'}`} key={item.id} onClick={() => openNotification(item)}><b>{item.title}</b><span>{item.message}</span><small>{new Date(item.created_at).toLocaleString()}</small></button>)}</section>}</div>{session ? <button className="account-chip" onClick={() => setPage('profile')}><span className="avatar small-avatar">{accountLabel.slice(0, 2).toUpperCase()}</span><span>Profile</span></button> : <button className="account-chip" onClick={() => setModal('account')}><LogIn size={15}/> Sign in</button>}</div></header>
 
       {page === 'discover' ? <>
         <section className="welcome-row"><div><p className="eyebrow"><span className="live-dot" /> YOUR NEIGHBOURHOOD, A LITTLE CLOSER</p><h1>Good things are<br className="desktop-break" /> happening nearby<span className="heading-period">.</span></h1><p className="welcome-sub">Find something useful. Pass something on. It all starts here.</p></div><button className="button button-primary welcome-cta" onClick={() => setModal('donate')}><Plus size={17} /> Create a donation</button></section>
-        <section className="metrics-row"><Metric icon={Package} number="128" label="items shared this week" tone="mint" /><Metric icon={Users} number="34" label="local organizations" tone="lavender" /><Metric icon={Heart} number="612" label="neighbors helped" tone="peach" /><div className="metric-note"><span className="metric-note-icon"><Sparkles size={15} /></span><span><b>Small acts, real impact.</b><small>There’s room for yours, too.</small></span></div></section>
-        <section className="discover-section"><div className="section-heading"><div><div className="eyebrow muted-eyebrow">THE COMMUNITY BOARD</div><h2>Find what’s needed</h2></div><button className="text-button" onClick={() => { setPage('organizations'); setFilter('All nearby') }}>Meet local organizations <ArrowRight size={15} /></button></div>
-          <div className="category-tabs"><div className="category-switch"><button className={category === 'food' ? 'selected' : ''} onClick={() => { setCategory('food'); setFilter('All nearby') }}><Utensils size={15} /> Food <span>12</span></button><button className={category === 'items' ? 'selected' : ''} onClick={() => { setCategory('items'); setFilter('All nearby') }}><Package size={15} /> Other items <span>18</span></button></div><button className="filter-button" onClick={() => notify('Showing donations closest to you')}><SlidersHorizontal size={15} /> Filters</button></div>
-          <div className="filter-row">{filters.map(f => <button key={f} className={`filter-chip ${filter === f ? 'active' : ''}`} onClick={() => { setFilter(f); if (f === 'Clothes' || f === 'Books' || f === 'Household') setCategory('items'); else if (f === 'Food') setCategory('food') }}>{f}</button>)}<div className="search-field"><Search size={15} /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search nearby donations" /></div></div>
-          <div className="results-line"><span><b>{visible.length} donations</b> close to you</span><button onClick={() => notify('Sorted by closest first')}>Closest first <ChevronDown size={14} /></button></div>
-          <div className="donation-grid">{visible.map(item => <DonationCard key={item.id} item={item} claimed={claimed.includes(item.id)} onClaim={() => claim(item)} />)}</div>
-          {visible.length === 0 && <div className="empty-state"><Package size={25} /><h3>Nothing in this category just yet</h3><p>Try another filter, or be the first to share something.</p><button className="button button-primary" onClick={() => setModal('donate')}><Plus size={16} /> Start a donation</button></div>}
-          <button className="load-more" onClick={() => notify('You’re seeing all recent donations in your area')}>You’re all caught up <span><Check size={14} /></span></button>
+        <section className="metrics-row"><Metric icon={Package} number={donations.length} label="available donations" tone="mint" /><Metric icon={Users} number={verifiedOrgCount} label="verified organizations" tone="lavender" /><Metric icon={Heart} number={claimRecords.filter(record => record.status === 'delivered').length} label="your completed pickups" tone="peach" /><div className="metric-note"><span className="metric-note-icon"><MapPin size={15} /></span><span><b>{userLocation?.label || 'Choose your area'}</b><small>Map pins are approximate.</small></span></div></section>
+        <section className="discover-section"><div className="section-heading"><div><div className="eyebrow muted-eyebrow">LIVE COMMUNITY LISTINGS</div><h2>Find what’s available</h2></div><button className="text-button" onClick={() => { setPage('organizations'); setFilter('All') }}>Verified organizations <ArrowRight size={15} /></button></div>
+          <div className="category-tabs"><div className="category-switch"><button className={category === 'food' ? 'selected' : ''} onClick={() => { setCategory('food'); setFilter('All') }}><Utensils size={15} /> Food <span>{donations.filter(item => item.category === 'food').length}</span></button><button className={category === 'items' ? 'selected' : ''} onClick={() => { setCategory('items'); setFilter('All') }}><Package size={15} /> Other items <span>{donations.filter(item => item.category === 'items').length}</span></button></div><div className="view-switch"><button className={!mapMode ? 'active' : ''} onClick={() => setMapMode(false)}>List</button><button className={mapMode ? 'active' : ''} onClick={() => setMapMode(true)}>Map</button></div></div>
+          <div className="filter-row">{filters.map(f => <button key={f} className={`filter-chip ${filter === f ? 'active' : ''}`} onClick={() => { setFilter(f); if (['Clothes','Books','Household'].includes(f)) setCategory('items'); else if (f === 'Food') setCategory('food') }}>{f}</button>)}<div className="search-field"><Search size={15} /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search donations" /></div></div>
+          <div className="results-line"><span><b>{visible.length} {visible.length === 1 ? 'donation' : 'donations'}</b> match your filters</span><button onClick={() => { if (!userLocation) { notify('Choose your area to sort by distance.'); return } setSortBy(current => current === 'nearest' ? 'newest' : 'nearest') }}>{sortBy === 'nearest' ? 'Closest first' : 'Newest first'} <ChevronDown size={14} /></button></div>
+          {donationError && <div className="form-error">{donationError}</div>}{donationsLoading ? <div className="empty-state"><div className="loading-dot"/><h3>Loading current donations…</h3></div> : mapMode ? <MapView points={visible} selectedPoint={userLocation} onSelect={point => setApproximateLocation(point)} className="board-map"/> : <div className="donation-grid">{visible.map(item => <DonationCard key={item.id} item={item} claimed={claimed.includes(item.id)} onClaim={() => claim(item)} />)}</div>}
+          {!donationsLoading && visible.length === 0 && <div className="empty-state"><Package size={25} /><h3>No current donations match</h3><p>Try another category or filter. New listings will appear here after someone posts them.</p>{session && <button className="button button-primary" onClick={() => setModal('donate')}><Plus size={16} /> Start a donation</button>}</div>}
         </section>
         <section className="lower-cards"><div className="community-banner"><span className="banner-stamp"><Heart size={17} /></span><div><h3>Something useful deserves another life.</h3><p>List it in a few minutes and we’ll help connect it to a verified local organization.</p></div><button className="button button-light" onClick={() => setModal('donate')}>Share something <ArrowRight size={15} /></button></div><div className="safe-card"><ShieldCheck size={18} /><span><b>Giving with confidence</b><small>Recipients are reviewed before they can receive donations.</small></span><ChevronRight size={16} /></div></section>
-      </> : <SecondaryPage page={page} donations={donations} claimed={claimed} claimRecords={claimRecords} session={session} onDonate={() => setModal('donate')} onRegister={() => setPage('verification')} onClaim={claim} onAdvance={advancePickup} />}
-      <footer className="footer"><span>© 2026 WelFlare</span><span><ShieldCheck size={12} /> A coordination platform built around care</span><button onClick={() => notify('Help is on its way')}>Need a hand?</button></footer>
+      </> : <SecondaryPage page={page} donations={donations} claimed={claimed} claimRecords={claimRecords} session={session} profile={profile} onSaveProfile={saveProfile} onSignOut={signOut} onDonate={() => session ? setModal('donate') : setModal('account')} onRegister={() => setPage('verification')} onClaim={claim} onAdvance={advancePickup} />}
+      <footer className="footer"><span>© 2026 WelFlare</span><span><ShieldCheck size={12} /> A coordination platform built around care</span></footer>
     </main>
-    {modal === 'donate' && <DonationModal onClose={() => setModal('')} onCreate={createDonation} />}
+    {modal === 'donate' && <DonationModal onClose={() => setModal('')} onCreate={createDonation} userLocation={userLocation} onUseMyLocation={useMyLocation} />}
     {modal === 'account' && <AccountModal onClose={() => setModal('')} connected={isSupabaseConfigured} accountType={accountType} setAccountType={setAccountType} intent={intent} setIntent={setIntent} onGoogle={beginGoogle} onAuth={authenticate} onContinue={() => { if (!isSupabaseConfigured) { setModal(''); notify('You’re exploring the WelFlare preview') } else if (session) { setModal(''); if (accountType === 'Organization' && intent !== 'Donate') setPage('verification') } else notify('Sign in or create an account to continue') }} />}
     {toast && <div className="toast"><Check size={16} />{toast}</div>}
   </div>
 }
 
 function MoreIcon() { return <span className="more-dots">•••</span> }
-function navName(page) { return ({ discover: 'Discover', donations: 'My donations', pickups: 'Pickups', organizations: 'Organizations', impact: 'Impact so far', verification: 'NGO verification' })[page] }
+function navName(page) { return ({ discover: 'Discover', donations: 'My donations', pickups: 'Pickups', organizations: 'Organizations', impact: 'Impact so far', verification: 'NGO verification', profile: 'My profile' })[page] }
 function SideLink({ icon: Icon, label, count, active, onClick }) { return <button className={`side-link ${active ? 'active' : ''}`} onClick={onClick}><Icon size={17} strokeWidth={1.8} /><span>{label}</span>{count && <i>{count}</i>}</button> }
 function Metric({ icon: Icon, number, label, tone }) { return <div className="metric"><span className={`metric-icon ${tone}`}><Icon size={16} /></span><span className="metric-text"><b>{number}</b><small>{label}</small></span></div> }
 function DonationCard({ item, claimed, onClaim }) {
@@ -238,31 +315,45 @@ function DonationCard({ item, claimed, onClaim }) {
   return <article className="donation-card"><div className="card-photo-wrap"><img className="card-photo" src={item.image} alt={`${item.name} donation`} loading="lazy"/><span className={`type-badge ${item.category}`}><Icon size={12}/>{item.subtype}</span>{item.urgency && <span className={`urgency-badge ${(urgency || '').toLowerCase()}`}><Clock3 size={11}/>{countdown}{item.expiresAt ? '' : ' left'}</span>}<button className="save-button" aria-label="Save donation"><Heart size={15}/></button></div><div className="donation-card-body"><div className="donation-card-title"><div><h3>{item.name}</h3><p className="donor-name">{item.donor}</p></div><button className="card-more" aria-label="More options">···</button></div><div className="detail-row"><span><Package size={13}/>{item.qty}</span><span><MapPin size={13}/>{item.place}</span></div><div className="card-footer"><span className="posted-time">{item.time}</span><button className={`claim-button ${claimed ? 'claimed' : ''}`} onClick={onClaim}>{claimed ? <><Check size={13}/> Requested</> : <>Request pickup <ArrowRight size={13}/></>}</button></div></div></article>
 }
 
-function DonationModal({ onClose, onCreate }) {
+function DonationModal({ onClose, onCreate, userLocation, onUseMyLocation }) {
   const [type, setType] = useState('food')
   const [photo, setPhoto] = useState(null)
   const [photoUrl, setPhotoUrl] = useState('')
   const [error, setError] = useState('')
+  const [pin, setPin] = useState(userLocation)
+  const [mapOpen, setMapOpen] = useState(false)
   const inputRef = React.useRef(null)
   function choosePhoto(file) { if (!file) return; if (!file.type.startsWith('image/')) return setError('Please choose a photo in JPG, PNG or HEIC format.'); if (file.size > 10 * 1024 * 1024) return setError('Please choose a photo under 10 MB.'); setError(''); setPhoto(file); setPhotoUrl(URL.createObjectURL(file)) }
-  async function submit(e) { e.preventDefault(); const form = new FormData(e.currentTarget); if (!photo) return setError('Please add a photo so the receiving organization can see what you’re sharing.'); if (type === 'food' && !form.get('safety')) return setError('Please confirm the food handling details before continuing.'); const expires = form.get('expiry'); const prepared = new Date(form.get('preparedAt')); if (type === 'food' && (!form.get('preparedAt') || prepared > new Date() || prepared >= new Date(expires))) return setError('Enter a preparation time before the best-before time.'); if (type === 'food' && expires && new Date(expires) <= new Date()) return setError('The best-before time must be in the future.'); const pickup = new Date(form.get('deadline')); if (!form.get('deadline') || pickup <= new Date()) return setError('Pickup availability must be a time in the future.'); const expiryDate = type === 'food' ? new Date(expires) : null; const hours = expiryDate ? Math.max(0, (expiryDate - new Date()) / 36e5) : 0; const fileBase64 = await new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(',')[1]); reader.onerror = reject; reader.readAsDataURL(photo) }); try { await onCreate({ category: type, subtype: form.get('subtype'), name: form.get('name'), qty: `${form.get('qty')} ${form.get('unit')}`, expiry: expiryDate ? `${Math.floor(hours)}h ${Math.round((hours % 1) * 60)}m` : '', expiryDate: expiryDate?.toISOString(), preparedAt: type === 'food' ? prepared.toISOString() : null, foodType: form.get('foodtype'), condition: form.get('condition'), pickupDeadline: pickup.toISOString(), urgency: expiryDate ? hours < 3 ? 'Critical' : hours <= 8 ? 'Soon' : 'Fresh' : '', place: form.get('location') || 'Bengaluru · nearby', notes: form.get('notes'), safety: Boolean(form.get('safety')), photoData: fileBase64, photoType: photo.type, photoName: photo.name, photoFile: photo, image: photoUrl, time: 'Posted just now' }) } catch (err) { setError(err.message || 'We couldn’t create this donation. Please try again.') } }
+  async function submit(e) {
+    e.preventDefault()
+    const form = new FormData(e.currentTarget)
+    if (!photo) return setError('Please add a photo so the receiving organization can see what you’re sharing.')
+    if (!pin) return setError('Choose an approximate pickup point on the map.')
+    if (type === 'food' && !form.get('safety')) return setError('Please confirm the food handling details before continuing.')
+    const expires = form.get('expiry'), prepared = new Date(form.get('preparedAt'))
+    if (type === 'food' && (!form.get('preparedAt') || prepared > new Date() || prepared >= new Date(expires))) return setError('Enter a preparation time before the best-before time.')
+    if (type === 'food' && expires && new Date(expires) <= new Date()) return setError('The best-before time must be in the future.')
+    const pickup = new Date(form.get('deadline'))
+    if (!form.get('deadline') || pickup <= new Date()) return setError('Pickup availability must be a time in the future.')
+    const expiryDate = type === 'food' ? new Date(expires) : null
+    const hours = expiryDate ? Math.max(0, (expiryDate - new Date()) / 36e5) : 0
+    const fileBase64 = await new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(',')[1]); reader.onerror = reject; reader.readAsDataURL(photo) })
+    try {
+      await onCreate({ category: type, subtype: form.get('subtype'), name: form.get('name'), qty: `${form.get('qty')} ${form.get('unit')}`, expiry: expiryDate ? `${Math.floor(hours)}h ${Math.round((hours % 1) * 60)}m` : '', expiryDate: expiryDate?.toISOString(), preparedAt: type === 'food' ? prepared.toISOString() : null, foodType: form.get('foodtype'), condition: form.get('condition'), pickupDeadline: pickup.toISOString(), urgency: expiryDate ? hours < 3 ? 'Critical' : hours <= 8 ? 'Soon' : 'Fresh' : '', place: form.get('location').trim(), latitude: pin.latitude, longitude: pin.longitude, notes: form.get('notes'), safety: Boolean(form.get('safety')), photoData: fileBase64, photoType: photo.type, photoName: photo.name, photoFile: photo, image: photoUrl, time: 'Posted just now' })
+    } catch (err) { setError(err.message || 'We couldn’t create this donation. Please try again.') }
+  }
   return <div className="modal-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) onClose() }}><section className="modal donation-modal"><div className="modal-head"><div><span className="eyebrow muted-eyebrow">MAKE A DIFFERENCE, CLOSE TO HOME</span><h2>Share a donation</h2><p>Tell the community what you have to pass along.</p></div><button className="icon-button" aria-label="Close" onClick={onClose}><X size={18} /></button></div><form onSubmit={submit}><div className="category-switch modal-switch"><button type="button" className={type === 'food' ? 'selected' : ''} onClick={() => { setType('food'); setError('') }}><Utensils size={15}/> Food</button><button type="button" className={type === 'items' ? 'selected' : ''} onClick={() => { setType('items'); setError('') }}><Package size={15}/> Other items</button></div><label className="photo-upload"><input ref={inputRef} type="file" accept="image/*" capture="environment" onChange={e => choosePhoto(e.target.files?.[0])} required={!photo} /><span className="upload-icon">{photoUrl ? <img src={photoUrl} alt="Your uploaded donation"/> : <Camera size={20}/>}</span><span><b>{photo ? photo.name : 'Add a photo of your donation'} <em>Required</em></b><small>One clear photo helps organizations know what to expect · up to 10 MB</small></span><button type="button" className="upload-browse" onClick={() => inputRef.current?.click()}><Upload size={14}/> {photo ? 'Change' : 'Upload'}</button></label>
-          <div className="form-grid"><label className="field wide"><span>What are you sharing? <i>*</i></span><input name="name" placeholder={type === 'food' ? 'e.g. Freshly packed lunch boxes' : 'e.g. Warm children’s clothing'} required/></label><label className="field"><span>Category <i>*</i></span><select name="subtype" required defaultValue=""><option value="" disabled>Choose a category</option>{(type === 'food' ? ['Cooked meals','Packaged food','Bakery','Produce','Groceries','Other food'] : ['Clothes','Books','Toys','Educational supplies','Beddings','Toiletries','Household items','Medical supplies','Electronics','Other goods']).map(x => <option key={x}>{x}</option>)}</select></label><div className="field"><span>Quantity <i>*</i></span><div className="quantity-input"><input name="qty" type="number" min="1" placeholder="e.g. 12" required/><select name="unit" aria-label="Quantity unit"><option>items</option><option>meals</option><option>boxes</option><option>bags</option><option>kg</option><option>sets</option><option>pieces</option><option>trays</option></select></div></div>{type === 'food' ? <><label className="field"><span>Prepared on <i>*</i></span><input name="preparedAt" type="datetime-local" required/></label><label className="field"><span>Best before <i>*</i></span><input name="expiry" type="datetime-local" required/></label><label className="field"><span>Food type</span><select name="foodtype"><option>Vegetarian</option><option>Non-vegetarian</option><option>Vegan</option><option>Not applicable</option></select></label><label className="field wide"><span>Storage & handling notes</span><input name="notes" placeholder="e.g. Keep refrigerated; sealed containers"/></label><label className="safety-check"><input type="checkbox" name="safety"/><span>I confirm that, to the best of my knowledge, this food has been handled and stored hygienically and offered within its shelf life. I’ve provided accurate preparation and expiry details.</span></label></> : <><label className="field"><span>Item condition <i>*</i></span><select name="condition" required><option>Good — ready to use</option><option>Like new</option><option>Gently used</option><option>Unopened</option></select></label><label className="field"><span>Size, if relevant</span><input placeholder="e.g. ages 5–7 or adult M"/></label><label className="field wide"><span>Anything else to know?</span><input name="notes" placeholder="Add useful details for the receiving organization"/></label></>}<label className="field wide"><span>Pickup location <i>*</i></span><input name="location" placeholder="Area or neighborhood; exact address after pickup is arranged" required/></label><label className="field wide"><span>Pickup available until <i>*</i></span><input name="deadline" type="datetime-local" required/></label></div><div className="privacy-note"><ShieldCheck size={15}/><span>Your exact address is shared only after a pickup is arranged.</span></div>{error && <div className="form-error">{error}</div>}<div className="modal-actions"><button type="button" className="button button-quiet" onClick={onClose}>Cancel</button><button className="button button-primary" type="submit"><Plus size={16}/> List this donation <ArrowRight size={15}/></button></div></form></section></div>
+          <div className="form-grid"><label className="field wide"><span>What are you sharing? <i>*</i></span><input name="name" placeholder={type === 'food' ? 'e.g. Freshly packed lunch boxes' : 'e.g. Warm children’s clothing'} required/></label><label className="field"><span>Category <i>*</i></span><select name="subtype" required defaultValue=""><option value="" disabled>Choose a category</option>{(type === 'food' ? ['Cooked meals','Packaged food','Bakery','Produce','Groceries','Other food'] : ['Clothes','Books','Toys','Educational supplies','Beddings','Toiletries','Household items','Medical supplies','Electronics','Other goods']).map(x => <option key={x}>{x}</option>)}</select></label><div className="field"><span>Quantity <i>*</i></span><div className="quantity-input"><input name="qty" type="number" min="1" placeholder="e.g. 12" required/><select name="unit" aria-label="Quantity unit"><option>items</option><option>meals</option><option>boxes</option><option>bags</option><option>kg</option><option>sets</option><option>pieces</option><option>trays</option></select></div></div>{type === 'food' ? <><label className="field"><span>Prepared on <i>*</i></span><input name="preparedAt" type="datetime-local" required/></label><label className="field"><span>Best before <i>*</i></span><input name="expiry" type="datetime-local" required/></label><label className="field"><span>Food type</span><select name="foodtype"><option>Vegetarian</option><option>Non-vegetarian</option><option>Vegan</option><option>Not applicable</option></select></label><label className="field wide"><span>Storage &amp; handling notes</span><input name="notes" placeholder="e.g. Keep refrigerated; sealed containers"/></label><label className="safety-check"><input type="checkbox" name="safety"/><span>I confirm that, to the best of my knowledge, this food has been handled and stored hygienically and offered within its shelf life. I’ve provided accurate preparation and expiry details.</span></label></> : <><label className="field"><span>Item condition <i>*</i></span><select name="condition" required><option>Good — ready to use</option><option>Like new</option><option>Gently used</option><option>Unopened</option></select></label><label className="field"><span>Size, if relevant</span><input placeholder="e.g. ages 5–7 or adult M"/></label><label className="field wide"><span>Anything else to know?</span><input name="notes" placeholder="Add useful details for the receiving organization"/></label></>}<label className="field wide"><span>Pickup area or landmark <i>*</i></span><input name="location" placeholder="Type a neighborhood or nearby landmark" required/></label><div className="field wide"><span>Approximate map pin <i>*</i></span><div className="map-actions"><button type="button" className="button button-secondary" onClick={() => setMapOpen(value => !value)}>{mapOpen ? 'Hide map' : pin ? 'Adjust pin on map' : 'Choose on map'} <MapPin size={14}/></button><button type="button" className="button button-quiet" onClick={() => onUseMyLocation(point => setPin(point))}>Use my location</button><small>{pin ? `${pin.latitude.toFixed(3)}, ${pin.longitude.toFixed(3)} · approximate` : 'A map pin is required. You can choose one manually.'}</small></div>{mapOpen && <MapView points={[]} selectedPoint={pin} onSelect={setPin} className="picker-map"/>}</div><label className="field wide"><span>Pickup available until <i>*</i></span><input name="deadline" type="datetime-local" required/></label></div><div className="privacy-note"><ShieldCheck size={15}/><span>The listing shares only this approximate map area. Add a nearby landmark above; share an exact address only after coordinating a pickup.</span></div>{error && <div className="form-error">{error}</div>}<div className="modal-actions"><button type="button" className="button button-quiet" onClick={onClose}>Cancel</button><button className="button button-primary" type="submit"><Plus size={16}/> List this donation <ArrowRight size={15}/></button></div></form></section></div>
 }
 
-function AccountModal({ onClose, connected, accountType, setAccountType, intent, setIntent, onContinue, onGoogle, onAuth }) {
-  const [mode, setMode] = useState('signin')
-  const [organizationType, setOrganizationType] = useState('restaurant')
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [error, setError] = useState('')
-  const [busy, setBusy] = useState(false)
-  async function submit(e) { e.preventDefault(); setBusy(true); setError(''); try { const data = await onAuth(email, password, mode, organizationType); if (data?.user && !data.session) setError('Check your inbox for the confirmation link, then sign in here.') } catch (err) { setError(err.message || 'We couldn’t complete that request.') } finally { setBusy(false) } }
-  return <div className="modal-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) onClose() }}><section className="modal account-modal"><div className="modal-head"><div><span className="eyebrow muted-eyebrow">WELCOME TO WELFLARE</span><h2>Good things start here.</h2><p>Sign in or create an account to join your community.</p></div><button className="icon-button" onClick={onClose}><X size={18}/></button></div><div className="auth-mode"><button className={mode === 'signin' ? 'selected' : ''} onClick={() => {setMode('signin');setError('')}}>Sign in</button><button className={mode === 'signup' ? 'selected' : ''} onClick={() => {setMode('signup');setError('')}}>Create account</button></div><button className="google-button" onClick={() => onGoogle(organizationType)}><GoogleMark/> Continue with Google</button><div className="divider"><span>OR WITH EMAIL</span></div><form onSubmit={submit}><label className="field"><span>Email address</span><input value={email} onChange={e => setEmail(e.target.value)} type="email" placeholder="you@example.com" required/></label><label className="field auth-password"><span>Password</span><input value={password} onChange={e => setPassword(e.target.value)} type="password" minLength="8" placeholder="At least 8 characters" required/></label>{error && <p className="auth-error">{error}</p>}<button className="email-link" disabled={busy}>{busy ? 'Please wait…' : mode === 'signup' ? 'Create account' : 'Sign in'} <ArrowRight size={15}/></button></form><div className="divider"><span>YOUR COMMUNITY PROFILE</span></div><span className="selector-label">I’m here as a</span><div className="choice-row">{['Individual','Organization'].map(x => <button className={accountType === x ? 'choice selected' : 'choice'} onClick={() => setAccountType(x)} key={x}>{x === 'Individual' ? <Users size={17}/> : <Building2 size={17}/>} {x}</button>)}</div>{accountType === 'Organization' && <label className="field organization-select"><span>Organization type</span><select value={organizationType} onChange={e => setOrganizationType(e.target.value)}><option value="restaurant">Restaurant</option><option value="catering_service">Catering service</option><option value="hotel">Hotel</option><option value="hostel">Hostel</option><option value="pg">PG</option><option value="school">School</option><option value="college">College</option><option value="corporate">Corporate</option><option value="retail_store">Retail store</option><option value="ngo">NGO / Non-profit</option><option value="trust">Trust</option><option value="society">Society</option><option value="section_8_company">Section 8 Company</option><option value="other">Other</option></select></label>}<span className="selector-label">I would like to</span><div className="choice-row">{['Donate','Receive','Both','Volunteer'].map(x => <button className={intent === x ? 'choice selected' : 'choice'} onClick={() => setIntent(x)} key={x}>{x === 'Donate' ? <Heart size={16}/> : x === 'Receive' ? <ArrowDownLeft size={16}/> : x === 'Volunteer' ? <Users size={16}/> : <Sparkles size={16}/>} {x}</button>)}</div>{intent === 'Receive' || intent === 'Both' ? <div className="verification-callout"><ShieldCheck size={16}/><span>Receiving organizations must pass WelFlare’s verification review before they can receive donations.</span></div> : null}{connected ? <p className="legal-copy">Choose sign in or create an account above to use WelFlare.</p> : <><button className="button button-primary continue-button" onClick={onContinue}>Explore the preview <ArrowRight size={16}/></button><p className="legal-copy">Preview uses sample content. Connect your Supabase project to enable real accounts and secure organization reviews.</p></>}</section></div>
+function AccountModal({ onClose, accountType, setAccountType, intent, setIntent, onGoogle, onAuth }) {
+  const [mode, setMode] = useState('signin'), [organizationType, setOrganizationType] = useState('restaurant'), [email, setEmail] = useState(''), [password, setPassword] = useState(''), [fullName, setFullName] = useState(''), [phone, setPhone] = useState(''), [homeArea, setHomeArea] = useState(''), [error, setError] = useState(''), [busy, setBusy] = useState(false)
+  async function submit(e) { e.preventDefault(); setBusy(true); setError(''); try { const data = await onAuth(email, password, mode, organizationType, fullName, phone, homeArea); if (data?.user && !data.session) setError('Check your inbox for the confirmation link, then sign in here.') } catch (err) { setError(err.message || 'We couldn’t complete that request.') } finally { setBusy(false) } }
+  return <div className="modal-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) onClose() }}><section className="modal account-modal"><div className="modal-head"><div><span className="eyebrow muted-eyebrow">WELCOME TO WELFLARE</span><h2>Good things start here.</h2><p>Sign in or create an account to join your community.</p></div><button className="icon-button" onClick={onClose}><X size={18}/></button></div><div className="auth-mode"><button className={mode === 'signin' ? 'selected' : ''} onClick={() => {setMode('signin');setError('')}}>Sign in</button><button className={mode === 'signup' ? 'selected' : ''} onClick={() => {setMode('signup');setError('')}}>Create account</button></div><span className="selector-label">I’m here as a</span><div className="choice-row">{['Individual','Organization'].map(x => <button type="button" className={accountType === x ? 'choice selected' : 'choice'} onClick={() => setAccountType(x)} key={x}>{x === 'Individual' ? <Users size={17}/> : <Building2 size={17}/>} {x}</button>)}</div>{accountType === 'Organization' && <label className="field organization-select"><span>Organization type</span><select value={organizationType} onChange={e => setOrganizationType(e.target.value)}><option value="restaurant">Restaurant</option><option value="catering_service">Catering service</option><option value="hotel">Hotel</option><option value="hostel">Hostel</option><option value="pg">PG</option><option value="school">School</option><option value="college">College</option><option value="corporate">Corporate</option><option value="retail_store">Retail store</option><option value="ngo">NGO / Non-profit</option><option value="trust">Trust</option><option value="society">Society</option><option value="section_8_company">Section 8 Company</option><option value="other">Other</option></select></label>}<span className="selector-label">I would like to</span><div className="choice-row">{['Donate','Receive','Both','Volunteer'].map(x => <button type="button" className={intent === x ? 'choice selected' : 'choice'} onClick={() => setIntent(x)} key={x}>{x === 'Donate' ? <Heart size={16}/> : x === 'Receive' ? <ArrowDownLeft size={16}/> : x === 'Volunteer' ? <Users size={16}/> : <Sparkles size={16}/>} {x}</button>)}</div>{accountType === 'Organization' && ['Receive','Both'].includes(intent) && <div className="verification-callout"><ShieldCheck size={16}/><span>Receiving organizations must pass WelFlare’s verification review before they can receive donations.</span></div>}<button className="google-button" type="button" onClick={() => onGoogle(organizationType, fullName, phone, homeArea)}><GoogleMark/> Continue with Google</button><div className="divider"><span>OR WITH EMAIL</span></div><form onSubmit={submit}>{mode === 'signup' && <><label className="field"><span>Full name <i>*</i></span><input value={fullName} onChange={e => setFullName(e.target.value)} autoComplete="name" placeholder="Your full name" required/></label><label className="field"><span>Phone number</span><input value={phone} onChange={e => setPhone(e.target.value)} autoComplete="tel" type="tel" placeholder="Optional"/></label><label className="field"><span>Home area or neighborhood</span><input value={homeArea} onChange={e => setHomeArea(e.target.value)} placeholder="Optional"/></label></>}<label className="field"><span>Email address</span><input value={email} onChange={e => setEmail(e.target.value)} type="email" autoComplete="email" placeholder="you@example.com" required/></label><label className="field auth-password"><span>Password</span><input value={password} onChange={e => setPassword(e.target.value)} type="password" autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} minLength="8" placeholder="At least 8 characters" required/></label>{error && <p className="auth-error">{error}</p>}<button className="email-link" disabled={busy}>{busy ? 'Please wait…' : mode === 'signup' ? 'Create account' : 'Sign in'} <ArrowRight size={15}/></button></form><p className="legal-copy">Your contact details stay private to your account.</p></section></div>
 }
 function GoogleMark() { return <svg width="17" height="17" viewBox="0 0 48 48" aria-hidden="true"><path fill="#4285F4" d="M43.6 24.5c0-1.4-.1-2.9-.4-4.3H24v8.1h11a9.4 9.4 0 0 1-4.1 6.1v5.1h6.6c3.9-3.6 6.1-8.8 6.1-15z"/><path fill="#34A853" d="M24 44c5.5 0 10.2-1.8 13.6-4.8L31 34.1c-1.8 1.2-4.1 2-7 2-5.3 0-9.8-3.6-11.4-8.4H5.8v5.3A20 20 0 0 0 24 44z"/><path fill="#FBBC05" d="M12.6 27.7a12 12 0 0 1 0-7.5v-5.3H5.8a20 20 0 0 0 0 18z"/><path fill="#EA4335" d="M24 11.8c3 0 5.7 1 7.8 3.1l5.9-5.8A19.6 19.6 0 0 0 24 4 20 20 0 0 0 5.8 14.9l6.8 5.3c1.6-4.8 6.1-8.4 11.4-8.4z"/></svg> }
 
-function SecondaryPage({ page, donations, claimed, claimRecords = [], session, onDonate, onRegister, onClaim, onAdvance }) {
+function SecondaryPage({ page, donations, claimed, claimRecords = [], session, profile, onSaveProfile, onSignOut, onDonate, onRegister, onClaim, onAdvance }) {
   const [step, setStep] = useState(0)
   const [sent, setSent] = useState(false)
   const [previewSubmission, setPreviewSubmission] = useState(false)
@@ -275,10 +366,11 @@ function SecondaryPage({ page, donations, claimed, claimRecords = [], session, o
   const [reviewReasons, setReviewReasons] = useState({})
   const [reviewChecks, setReviewChecks] = useState({})
   const [adminBusy, setAdminBusy] = useState('')
-  const [orgProfiles, setOrgProfiles] = useState(null)
+  const [orgProfiles, setOrgProfiles] = useState([])
   const [volunteerInvites, setVolunteerInvites] = useState([])
   const stepPanel = React.useRef(null)
   const [tab, setTab] = useState('application')
+  if (page === 'profile') return <ProfilePage session={session} profile={profile} onSave={onSaveProfile} onSignOut={onSignOut} />
   React.useEffect(() => {
     if (page !== 'verification' || tab !== 'admin' || !supabase) return
     let current = true
@@ -366,10 +458,16 @@ function SecondaryPage({ page, donations, claimed, claimRecords = [], session, o
 
   if (page === 'organizations') return <OrganizationDirectory profiles={orgProfiles} session={session} />
 
-  if (page === 'donations') { const mine = donations.filter(x => x.donor === 'You'); return <section className="subpage"><div className="page-hero"><div><p className="eyebrow muted-eyebrow">THANKS FOR PASSING IT ON</p><h1>My donations</h1><p>Keep an eye on the useful things you’ve shared.</p></div><button className="button button-primary" onClick={onDonate}><Plus size={16}/> New donation</button></div>{mine.length ? <div className="donation-grid">{mine.map(item => <DonationCard key={item.id} item={item} claimed={false} onClaim={() => {}}/>)}</div> : <div className="empty-state"><Package size={25}/><h3>Your story starts with one small thing.</h3><p>Your donations and their pickup progress will show up here.</p><button className="button button-primary" onClick={onDonate}><Plus size={16}/> Share a donation</button></div>}</section> }
+  if (page === 'donations') { const mine = donations.filter(x => x.donor === 'Your donation'); return <section className="subpage"><div className="page-hero"><div><p className="eyebrow muted-eyebrow">THANKS FOR PASSING IT ON</p><h1>My donations</h1><p>Keep an eye on the useful things you’ve shared.</p></div><button className="button button-primary" onClick={onDonate}><Plus size={16}/> New donation</button></div>{mine.length ? <div className="donation-grid">{mine.map(item => <DonationCard key={item.id} item={item} claimed={false} onClaim={() => {}}/>)}</div> : <div className="empty-state"><Package size={25}/><h3>Your story starts with one small thing.</h3><p>Your donations and their pickup progress will show up here.</p><button className="button button-primary" onClick={onDonate}><Plus size={16}/> Share a donation</button></div>}</section> }
 
   if (page === 'pickups') { const records = claimRecords.length ? claimRecords : donations.filter(x => claimed.includes(x.id)).map(item => ({ claimId: item.id, status: 'accepted', item })); return <section className="subpage"><div className="page-hero"><div><p className="eyebrow muted-eyebrow">ON THE WAY TO A NEW HOME</p><h1>Your pickups</h1><p>Follow the donations you’ve requested and what comes next.</p></div><span className="page-hero-icon"><Truck size={25}/></span></div>{volunteerInvites.length > 0 && <div className="invitation-list"><h2>Volunteer invitations</h2>{volunteerInvites.map(invite => <div className="invitation-row" key={invite.id}><span className="metric-icon mint"><Users size={16}/></span><span><b>{invite.organizations?.name || 'Verified organization'}</b><small>Pickup volunteer invitation · {new Date(invite.created_at).toLocaleDateString()}</small></span><button className="button button-primary" onClick={async () => { const { error } = await supabase.functions.invoke('accept-volunteer-invitation',{ body: { invitationId: invite.id } }); if (error) notify('The invitation could not be accepted. It may have expired.'); else { setVolunteerInvites(current => current.filter(item => item.id !== invite.id)); notify('You’re now an invited pickup volunteer for this organization') } }}>Accept invitation</button></div>)}</div>}{records.length ? <div className="pickup-list">{records.map(record => <div className="pickup-row" key={record.claimId}><img src={record.item.image} alt=""/><div><h3>{record.item.name}</h3><p>{record.item.donor} · {record.item.qty} · {record.item.place}</p></div><span className={`status-pill ${record.status === 'delivered' ? 'verified' : 'pending'}`}>{record.status.replaceAll('_',' ')}</span>{record.status === 'accepted' && <button className="button button-secondary" onClick={() => onAdvance(record,'picked_up')}>Mark collected <ArrowRight size={13}/></button>}{record.status === 'picked_up' && <button className="button button-primary" onClick={() => onAdvance(record,'delivered')}>Mark delivered <Check size={13}/></button>}{record.item.category === 'food' && <div className="food-handover"><ShieldCheck size={15}/><span>Donor-submitted food information{record.item.safetyTime ? ` · ${new Date(record.item.safetyTime).toLocaleString()}` : ''}. The recipient is responsible for suitable handling after handover. Do not distribute after the listed best-before time. WelFlare coordinates the pickup and does not independently certify food safety.</span></div>}</div>)}</div> : volunteerInvites.length === 0 && <div className="empty-state"><Truck size={25}/><h3>Nothing to pick up yet.</h3><p>When you request a nearby donation, it’ll appear here.</p><button className="button button-primary">Explore nearby <ArrowRight size={15}/></button></div>}</section> }
-  return <section className="subpage"><div className="page-hero"><div><p className="eyebrow muted-eyebrow">GOOD THINGS, ADDED UP</p><h1>Your impact, in real numbers</h1><p>Every shared item finds a new purpose through your community.</p></div><span className="page-hero-icon"><Heart size={25}/></span></div><div className="impact-stats"><div><span className="metric-icon mint"><Package size={17}/></span><b>128</b><small>donations shared this week</small></div><div><span className="metric-icon lavender"><Users size={17}/></span><b>612</b><small>neighbors supported</small></div><div><span className="metric-icon peach"><Leaf size={17}/></span><b>84%</b><small>matched within a day</small></div></div><div className="impact-quote"><Sparkles size={18}/><div><h3>Useful things deserve another chance.</h3><p>WelFlare helps neighbors and community organizations find one another. Your participation makes the network stronger.</p></div></div></section>
+  return <section className="subpage"><div className="page-hero"><div><p className="eyebrow muted-eyebrow">GOOD THINGS, ADDED UP</p><h1>Your impact</h1><p>Activity from real WelFlare listings and pickups.</p></div><span className="page-hero-icon"><Heart size={25}/></span></div><div className="impact-stats"><div><span className="metric-icon mint"><Package size={17}/></span><b>{donations.length}</b><small>currently available donations</small></div><div><span className="metric-icon lavender"><Users size={17}/></span><b>{claimRecords.length}</b><small>pickup requests in your account</small></div><div><span className="metric-icon peach"><Leaf size={17}/></span><b>{claimRecords.filter(record => record.status === 'delivered').length}</b><small>pickups marked delivered</small></div></div><div className="impact-quote"><Sparkles size={18}/><div><h3>Useful things deserve another chance.</h3><p>WelFlare connects available goods with organizations that have completed verification.</p></div></div></section>
+}
+
+function ProfilePage({ session, profile, onSave, onSignOut }) {
+  const [busy, setBusy] = useState(false), [error, setError] = useState(''), [message, setMessage] = useState('')
+  async function submit(event) { event.preventDefault(); setBusy(true); setError(''); setMessage(''); const form = new FormData(event.currentTarget); try { await onSave({ display_name: form.get('name').trim(), phone: form.get('phone').trim(), home_area: form.get('area').trim() }); setMessage('Your profile was saved.') } catch (failure) { setError(failure.message || 'We could not save your profile.') } finally { setBusy(false) } }
+  return <section className="subpage"><div className="page-hero"><div><p className="eyebrow muted-eyebrow">YOUR ACCOUNT</p><h1>My profile</h1><p>Update how your community sees you and sign out when you’re done.</p></div><span className="page-hero-icon"><Users size={25}/></span></div><div className="profile-form-card"><p><b>{session?.user?.email}</b><small> Account email</small></p><form onSubmit={submit}><label className="field"><span>Full name <i>*</i></span><input name="name" defaultValue={profile?.display_name || session?.user?.user_metadata?.display_name || ''} required maxLength="100"/></label><label className="field"><span>Phone number</span><input name="phone" type="tel" defaultValue={profile?.phone || ''} maxLength="30"/></label><label className="field"><span>Home area or neighborhood</span><input name="area" defaultValue={profile?.home_area || ''} maxLength="120"/></label>{error && <div className="form-error">{error}</div>}{message && <p className="profile-success">{message}</p>}<div className="modal-actions"><button className="button button-primary" disabled={busy}>{busy ? 'Saving…' : 'Save profile'}</button><button type="button" className="button button-secondary" onClick={onSignOut}>Sign out</button></div></form></div></section>
 }
 
 function UploadField({ title, description, required, docType, onFile }) { const [name, setName] = useState(''); return <label className="document-upload"><input type="file" accept="application/pdf,image/jpeg,image/png,image/webp" onChange={e => { const file = e.target.files?.[0]; setName(file?.name || ''); if (docType && file) onFile(docType, file) }} required={required} name={docType || undefined}/><FileText size={18}/><span><b>{title} {required && <i>*</i>}</b><small>{name || description}</small></span><Upload size={15}/></label> }
@@ -390,13 +488,8 @@ function OrganizationDirectory({ profiles, session }) {
     if (error) setInviteMessage(error.message || 'The invitation could not be sent.')
     else { setInviteMessage(`Invitation saved for ${data.email}. Ask them to sign in and accept it in Pickups.`); setVolunteerEmail('') }
   }
-  const examples = [
-    { id: 'demo-hf', initials: 'HF', name: 'Helping Hands Foundation', type: 'NGO · example', accepts: ['Clothes','Books','Household items'], dist: '1.4 km away', tone: 'lavender', sample: true },
-    { id: 'demo-nk', initials: 'NK', name: 'Northside Community Kitchen', type: 'NGO · example', accepts: ['Cooked meals','Produce','Groceries'], dist: '2.1 km away', tone: 'mint', sample: true },
-    { id: 'demo-sc', initials: 'SC', name: 'Sunrise Children’s Centre', type: 'NGO · example', accepts: ['Books','Educational supplies','Toys'], dist: '3.6 km away', tone: 'peach', sample: true },
-  ]
-  const organizations = profiles === null ? examples : profiles.map(o => ({ ...o, initials: o.name.slice(0,2).toUpperCase(), accepts: o.accepts.map(type => type.replaceAll('_',' ')), tone: 'mint', sample: false }))
-  return <section className="subpage"><div className="page-hero"><div><p className="eyebrow muted-eyebrow">YOUR LOCAL NETWORK</p><h1>Organizations nearby</h1><p>Meet reviewed community organizations and see what they can receive.</p></div><span className="page-hero-icon"><Users size={25}/></span></div>{managedOrganization && <div className="invite-panel"><div><h3>Bring a pickup volunteer on board</h3><p>Only your verified organization’s accepted donation types can be picked up by invited volunteers.</p></div><form onSubmit={inviteVolunteer}><input type="email" value={volunteerEmail} onChange={e => setVolunteerEmail(e.target.value)} placeholder="Volunteer’s WelFlare email" required/><button className="button button-primary" disabled={inviteBusy}>{inviteBusy ? 'Saving…' : 'Invite volunteer'} <ArrowRight size={14}/></button></form>{inviteMessage && <p className="invite-message">{inviteMessage}</p>}</div>}{organizations.length ? <div className="org-grid">{organizations.map(o => <article className="org-card" key={o.id}><div className={`org-avatar ${o.tone}`}>{o.initials}</div><span className={`status-pill ${o.sample ? 'not-started' : 'verified'}`}>{o.sample ? 'Example profile' : <><BadgeCheck size={12}/> Verified</>}</span><h3>{o.name}</h3><p className="org-type">{o.type}</p><div className="org-accepts"><span>ACCEPTS</span><b>{o.accepts.join(' · ')}</b></div>{o.checks && <div className="verification-checks">{[['darpan_verified','NGO DARPAN Verified'],['registration_verified','Organization Registration Verified'],['pan_verified','PAN Verified'],['bank_verified','Bank Account Verified'],['twelve_ab_verified','12A / 12AB Verified'],['eighty_g_verified','80G Verified'],['fcra_verified','FCRA Verified']].filter(([key]) => o.checks[key]).map(([,label]) => <span key={label}><Check size={11}/>{label}</span>)}</div>}{o.dist && <p className="org-distance"><MapPin size={13}/>{o.dist}</p>}{o.sample && <p className="example-note">Sample listing for the preview. No real organization verification is implied.</p>}<button className="button button-secondary">View profile <ArrowRight size={14}/></button></article>)}</div> : <div className="empty-state"><Users size={25}/><h3>No verified organizations nearby yet.</h3><p>Organizations appear here after a reviewer completes their application.</p></div>}<p className="fine-print public-verification-note"><ShieldCheck size={14}/> Verification checks submitted identity and records. WelFlare and the Government of India do not guarantee an organization’s conduct or the use of donations.</p></section>
+  const organizations = (profiles || []).map(o => ({ ...o, initials: o.name.slice(0,2).toUpperCase(), accepts: o.accepts.map(type => type.replaceAll('_',' ')), tone: 'mint', sample: false }))
+  return <section className="subpage"><div className="page-hero"><div><p className="eyebrow muted-eyebrow">YOUR LOCAL NETWORK</p><h1>Organizations nearby</h1><p>Meet reviewed community organizations and see what they can receive.</p></div><span className="page-hero-icon"><Users size={25}/></span></div>{managedOrganization && <div className="invite-panel"><div><h3>Bring a pickup volunteer on board</h3><p>Only your verified organization’s accepted donation types can be picked up by invited volunteers.</p></div><form onSubmit={inviteVolunteer}><input type="email" value={volunteerEmail} onChange={e => setVolunteerEmail(e.target.value)} placeholder="Volunteer’s WelFlare email" required/><button className="button button-primary" disabled={inviteBusy}>{inviteBusy ? 'Saving…' : 'Invite volunteer'} <ArrowRight size={14}/></button></form>{inviteMessage && <p className="invite-message">{inviteMessage}</p>}</div>}{organizations.length ? <div className="org-grid">{organizations.map(o => <article className="org-card" key={o.id}><div className={`org-avatar ${o.tone}`}>{o.initials}</div><span className="status-pill verified"><BadgeCheck size={12}/> Verified</span><h3>{o.name}</h3><p className="org-type">{o.type}</p><div className="org-accepts"><span>ACCEPTS</span><b>{o.accepts.join(' · ')}</b></div>{o.checks && <div className="verification-checks">{[['darpan_verified','NGO DARPAN Verified'],['registration_verified','Organization Registration Verified'],['pan_verified','PAN Verified'],['bank_verified','Bank Account Verified'],['twelve_ab_verified','12A / 12AB Verified'],['eighty_g_verified','80G Verified'],['fcra_verified','FCRA Verified']].filter(([key]) => o.checks[key]).map(([,label]) => <span key={label}><Check size={11}/>{label}</span>)}</div>}<button className="button button-secondary">View profile <ArrowRight size={14}/></button></article>)}</div> : <div className="empty-state"><Users size={25}/><h3>No verified organizations nearby yet.</h3><p>Organizations appear here after a reviewer completes their application.</p></div>}<p className="fine-print public-verification-note"><ShieldCheck size={14}/> Verification checks submitted identity and records. WelFlare and the Government of India do not guarantee an organization’s conduct or the use of donations.</p></section>
 }
 
 function AdminReviewQueue({ applications, loading, error, reasons, setReasons, checks, setChecks, busy, onReview }) {
@@ -406,5 +499,12 @@ function AdminReviewQueue({ applications, loading, error, reasons, setReasons, c
 
 async function fileAsBase64(file) { return new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(',')[1]); reader.onerror = reject; reader.readAsDataURL(file) }) }
 
-createRoot(document.getElementById('root')).render(<App />)
+class AppErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null } }
+  static getDerivedStateFromError(error) { return { error } }
+  componentDidCatch(error) { console.error('WelFlare screen error:', error) }
+  render() { return this.state.error ? <main className="app-error-screen"><h1>WelFlare had a problem loading this screen.</h1><p>{this.state.error.message}</p><button onClick={() => window.location.reload()}>Reload the page</button></main> : this.props.children }
+}
+
+createRoot(document.getElementById('root')).render(<AppErrorBoundary><App /></AppErrorBoundary>)
 
