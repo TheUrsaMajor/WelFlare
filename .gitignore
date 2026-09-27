@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.env
+.env.local
+/FULL Stack Syllabus.pdf
+/Vision2Web Hackathon_Problem Statements.pdf
+supabase/.temp/

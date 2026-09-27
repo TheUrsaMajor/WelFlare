@@ -1,0 +1,25 @@
+project_id = "welflare"
+
+[functions.create-donation]
+verify_jwt = true
+
+[functions.submit-ngo-application]
+verify_jwt = true
+
+[functions.review-organization]
+verify_jwt = true
+
+[functions.get-review-queue]
+verify_jwt = true
+
+[functions.request-pickup]
+verify_jwt = true
+
+[functions.advance-pickup]
+verify_jwt = true
+
+[functions.invite-volunteer]
+verify_jwt = true
+
+[functions.accept-volunteer-invitation]
+verify_jwt = true
