@@ -176,7 +176,7 @@ In PowerShell, make sure you are still in the WelFlare folder. Stop any old prev
 npm run dev
 ```
 
-Open the address Vite prints (usually `http://localhost:5173` or `http://127.0.0.1:5173`). Sign up with an email and password, confirm the email if asked, and sign in again. Try Google only after completing Step 9. A newly created account should now use Supabase; sample listings in the Preview feed are still example content.
+Open the address Vite prints (usually `http://localhost:5173` or `http://127.0.0.1:5173`). Sign up with an email and password, confirm the email if asked, and sign in again. Try Google only after completing Step 9. A newly created account should now use Supabase. Listings and organizations appear only after real users submit them and, for recipients, an administrator completes verification.
 
 ## What should work after setup
 

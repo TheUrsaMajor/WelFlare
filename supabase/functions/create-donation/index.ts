@@ -43,8 +43,9 @@ Deno.serve(async (request) => {
   const itemName = String(input.name ?? '').trim()
   const quantity = String(input.qty ?? '').trim().match(/^(\d+(?:\.\d+)?)\s+(.+)$/)
   const place = String(input.place ?? '').trim()
-  const latitude = Number(input.latitude)
-  const longitude = Number(input.longitude)
+  const coordinate = (value: unknown) => value == null || (typeof value === 'string' && !value.trim()) || typeof value === 'boolean' ? Number.NaN : Number(value)
+  const latitude = coordinate(input.latitude)
+  const longitude = coordinate(input.longitude)
   const pickupDeadline = new Date(String(input.pickupDeadline ?? ''))
   const expiry = input.expiry ? new Date(String(input.expiry)) : null
   const preparedAt = input.preparedAt ? new Date(String(input.preparedAt)) : null
