@@ -34,8 +34,9 @@ Deno.serve(async request => {
   if (!organizationIds.length) return reply({ error: 'Pickup requests are available to verified organizations and their invited volunteers.' }, 403)
   const { data: organizations, error: orgError } = await admin.from('organizations').select('id,verification_status,accepts').in('id', organizationIds).eq('verification_status', 'verified')
   if (orgError || !organizations?.length) return reply({ error: 'Your recipient organization is not currently verified.' }, 403)
-  const { data: donation, error: donationError } = await admin.from('donations').select('id,category,status,expires_at,pickup_deadline,recipient_organization_id').eq('id', body.donationId).maybeSingle()
+  const { data: donation, error: donationError } = await admin.from('donations').select('id,donor_id,category,status,expires_at,pickup_deadline,recipient_organization_id').eq('id', body.donationId).maybeSingle()
   if (donationError || !donation || donation.status !== 'posted') return reply({ error: 'This donation is no longer available.' }, 409)
+  if (donation.donor_id === user.id) return reply({ error: 'You cannot request a pickup for a donation you posted.' }, 403)
   const now = new Date()
   if (new Date(donation.pickup_deadline) <= now || (donation.category === 'food' && (!donation.expires_at || new Date(donation.expires_at) <= now))) return reply({ error: 'This donation has expired or its pickup window has passed.' }, 409)
 

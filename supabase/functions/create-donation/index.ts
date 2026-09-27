@@ -40,6 +40,7 @@ Deno.serve(async (request) => {
     'Medical supplies': 'medical_supplies', Electronics: 'electronics', 'Other goods': 'other_goods',
   }
   const category = typeof input.category === 'string' && input.category === 'food' ? 'food' : categoryMap[String(input.subtype)]
+  const idempotencyKey = String(input.idempotencyKey ?? '')
   const itemName = String(input.name ?? '').trim()
   const quantity = String(input.qty ?? '').trim().match(/^(\d+(?:\.\d+)?)\s+(.+)$/)
   const place = String(input.place ?? '').trim()
@@ -54,6 +55,7 @@ Deno.serve(async (request) => {
   const allowedImages = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/heic'])
 
   if (!category || itemName.length < 2 || itemName.length > 120) return json({ error: 'Please add a valid name and category.' }, 400)
+  if (!/^[0-9a-f-]{36}$/i.test(idempotencyKey)) return json({ error: 'This listing attempt could not be verified. Close the form and try again.' }, 400)
   if (!quantity || Number(quantity[1]) <= 0 || Number(quantity[1]) > 1000000) return json({ error: 'Please enter a valid donation quantity.' }, 400)
   if (!place || place.length > 180 || !Number.isFinite(latitude) || latitude < -90 || latitude > 90 || !Number.isFinite(longitude) || longitude < -180 || longitude > 180 || !Number.isFinite(pickupDeadline.valueOf()) || pickupDeadline <= new Date()) return json({ error: 'Please choose a pickup area on the map and set a future pickup deadline.' }, 400)
   if (category === 'food' && (!expiry || !Number.isFinite(expiry.valueOf()) || expiry <= new Date() || !preparedAt || !Number.isFinite(preparedAt.valueOf()) || preparedAt > new Date() || preparedAt >= expiry || !input.safety)) return json({ error: 'Food needs an accurate preparation time, future best-before time and a food handling acknowledgement.' }, 400)
@@ -71,7 +73,13 @@ Deno.serve(async (request) => {
   if (!validImage) return json({ error: 'The uploaded file does not match a supported image format.' }, 400)
 
   const admin = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } })
-  const donationId = crypto.randomUUID()
+  const proposedDonationId = crypto.randomUUID()
+  const { data: reservation, error: reservationError } = await admin.rpc('reserve_donation_creation', { p_donor_id: user.id, p_key: idempotencyKey, p_new_donation_id: proposedDonationId })
+  if (reservationError || !reservation?.[0]) return json({ error: 'We could not reserve this listing attempt. Please try again.' }, 503)
+  const donationId = reservation[0].reserved_donation_id
+  if (reservation[0].reservation_state === 'complete') return json({ donationId, status: 'posted', duplicate: true }, 200)
+  if (donationId !== proposedDonationId) return json({ error: 'This listing is already being created. Please wait a moment before trying again.' }, 409)
+  const failRequest = async () => { await admin.from('donation_creation_requests').update({ state: 'failed', updated_at: new Date().toISOString() }).eq('donor_id', user.id).eq('idempotency_key', idempotencyKey) }
   const extension = ({ 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/heic': 'heic' } as Record<string, string>)[imageType]
   const storagePath = `${donationId}/${crypto.randomUUID()}.${extension}`
 
@@ -87,11 +95,12 @@ Deno.serve(async (request) => {
     food_safety_declared_at: category === 'food' ? new Date().toISOString() : null,
     food_safety_declared_by: category === 'food' ? user.id : null,
   })
-  if (insertError) return json({ error: 'The donation could not be saved. Please check the details and try again.' }, 400)
+  if (insertError) { await failRequest(); return json({ error: 'The donation could not be saved. Please check the details and try again.' }, 400) }
 
   const { error: uploadError } = await admin.storage.from('donation-photos').upload(storagePath, imageBytes, { contentType: imageType, upsert: false })
   if (uploadError) {
     await admin.from('donations').delete().eq('id', donationId)
+    await failRequest()
     return json({ error: 'The photo could not be saved securely, so the listing was not published.' }, 500)
   }
 
@@ -99,6 +108,7 @@ Deno.serve(async (request) => {
   if (photoError) {
     await admin.storage.from('donation-photos').remove([storagePath])
     await admin.from('donations').delete().eq('id', donationId)
+    await failRequest()
     return json({ error: 'The photo could not be attached, so the listing was not published.' }, 500)
   }
 
@@ -106,9 +116,12 @@ Deno.serve(async (request) => {
   if (publishError) {
     await admin.storage.from('donation-photos').remove([storagePath])
     await admin.from('donations').delete().eq('id', donationId)
+    await failRequest()
     return json({ error: 'The listing could not be published. Please try again.' }, 500)
   }
 
   const { data: { publicUrl } } = admin.storage.from('donation-photos').getPublicUrl(storagePath)
+  const { error: completeError } = await admin.from('donation_creation_requests').update({ state: 'complete', updated_at: new Date().toISOString() }).eq('donor_id', user.id).eq('idempotency_key', idempotencyKey)
+  if (completeError) return json({ donationId, photoUrl: publicUrl, status: 'posted', duplicate: false, notice: 'Your donation is posted. Refresh your donations to see it.' }, 201)
   return json({ donationId, photoUrl: publicUrl, status: 'posted' }, 201)
 })
