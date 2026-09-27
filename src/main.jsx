@@ -400,7 +400,7 @@ function SecondaryPage({ page, donations, claimed, claimRecords = [], session, p
     if (!supabase) return
     let current = true
     setQueueLoading(true); setQueueError('')
-    supabase.functions.invoke('get-review-queue').then(({ data, error }) => {
+    supabase.functions.invoke('get-review-queue', { method: 'GET' }).then(({ data, error }) => {
       if (!current) return
       if (error) setQueueError(error.message || 'This view is restricted to authorized WelFlare administrators.')
       else setQueue(data?.applications ?? [])
@@ -428,7 +428,7 @@ function SecondaryPage({ page, donations, claimed, claimRecords = [], session, p
     setAdminBusy('')
     if (error) { setQueueError(error.message || 'The review action could not be recorded.'); return }
     if (tab === 'admin') {
-      const { data } = await supabase.functions.invoke('get-review-queue')
+      const { data } = await supabase.functions.invoke('get-review-queue', { method: 'GET' })
       if (data?.applications) setQueue(data.applications)
     }
   }
